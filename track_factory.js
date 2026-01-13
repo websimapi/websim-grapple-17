@@ -63,7 +63,7 @@ export class TrackFactory {
         
         let color = 0x00ffff;
         if (type === 'SCORE') color = 0xff00ff;
-        if (type === 'TIME') color = 0xffff00;
+        if (type === 'AUTO_GRAPPLE') color = 0x00ff44;
 
         const geo = new THREE.IcosahedronGeometry(1.2, 0);
         const mat = new THREE.MeshStandardMaterial({

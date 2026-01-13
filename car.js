@@ -16,6 +16,7 @@ export class Car {
         this.boostTimer = 0;
         this.timeScale = 1.0;
         this.scoreBonus = 0;
+        this.autoGrappleTimer = 0;
         
         // Grapple State
         this.grappleState = 'IDLE'; 
@@ -164,12 +165,26 @@ export class Car {
             this.boostTimer -= dt;
             if (this.boostTimer <= 0) this.boostTimer = 0;
         }
+        if (this.autoGrappleTimer > 0) {
+            this.autoGrappleTimer -= dt;
+            if (this.autoGrappleTimer <= 0) this.autoGrappleTimer = 0;
+        }
         if (this.timeScale < 1.0) {
             this.timeScale = THREE.MathUtils.lerp(this.timeScale, 1.0, dt * 0.3);
         }
 
+        // 3D Terrain Handling
+        const trackState = trackManager.getTrackState(this.position);
+
         // 1. Input & State Management
         const grappleInfo = trackManager.getNearestGrappleTarget(this.position);
+
+        // Auto-Grapple Logic: Fires if about to miss/fall while powerup is active
+        if (this.autoGrappleTimer > 0 && this.grappleState === 'IDLE' && !trackState.onTrack) {
+            if (grappleInfo.target && !grappleInfo.isItem && grappleInfo.distance < 80) {
+                this.fireGrapple(grappleInfo.target);
+            }
+        }
         
         // Input Handling
         if (input.mouseDown) {
@@ -190,49 +205,53 @@ export class Car {
         // Variables for rotation
         const targetQuat = new THREE.Quaternion();
         
-        // 3D Terrain Handling
-        const trackState = trackManager.getTrackState(this.position);
-
         // 2. Car Movement
         if (this.grappleState === 'ATTACHED' && this.grappleTarget && !this.grappleTarget.type) {
-            // Circular Motion Logic (Grappling - ONLY for posts, items are collected)
             const postPos = this.grappleTarget.position;
             const radiusVector = new THREE.Vector3().subVectors(this.position, postPos);
             
+            // Handle Off-Road Yank Physics
+            if (!trackState.onTrack) {
+                // Real tension simulation: Pull car towards post if distance exceeds length
+                const tensionDir = radiusVector.clone().normalize().negate();
+                const distToPost = radiusVector.length();
+                
+                // Yank Force: Lift car and pull it back towards the swing plane
+                if (distToPost > 15) {
+                    this.verticalVelocity += 140 * dt; // Strong lift
+                    // Accelerate towards the track/post horizontally
+                    this.direction.lerp(tensionDir, dt * 5).normalize();
+                }
+                
+                // Allow swing velocity to guide direction
+                const swingDir = new THREE.Vector3().crossVectors(radiusVector, new THREE.Vector3(0, 1, 0)).normalize();
+                if (swingDir.dot(this.direction) < 0) swingDir.negate();
+                this.direction.lerp(swingDir, dt * 2).normalize();
+            }
+
             // Project logic to 2D for steering, but keep Y relative
             const radius2D = new THREE.Vector2(radiusVector.x, radiusVector.z).length();
-            
-            // Tangent Logic
             let tangent = new THREE.Vector3().crossVectors(radiusVector, new THREE.Vector3(0, 1, 0)).normalize();
             if (tangent.dot(this.direction) < 0) tangent.negate();
 
-            // Move
             const arcLength = this.speed * dt;
-            const angleChange = arcLength / radius2D; // Approx
+            const angleChange = arcLength / Math.max(radius2D, 1);
             
             const toPost = new THREE.Vector3().subVectors(postPos, this.position);
             const crossY = new THREE.Vector3().crossVectors(this.direction, toPost).y;
             const rotDir = crossY > 0 ? -1 : 1; 
 
-            // Calculate Roll
             const grappleRoll = rotDir * 0.35;
-
             const pos2D = new THREE.Vector2(this.position.x - postPos.x, this.position.z - postPos.z);
             pos2D.rotateAround(new THREE.Vector2(0,0), rotDir * angleChange);
             
             this.position.x = postPos.x + pos2D.x;
             this.position.z = postPos.z + pos2D.y;
-
             this.direction.copy(tangent).normalize();
             
-            // While grappling, we might swing vertically? 
-            // For now, let's keep gravity active to pull down, but rope holds? 
-            // Simplifying: Grappling ignores track slope, maintains height or falls slowly?
-            // Let's allow grappling to "swing" (gravity pulls down).
-            this.verticalVelocity -= 20 * dt; // Gravity
+            this.verticalVelocity -= 25 * dt; 
             this.position.y += this.verticalVelocity * dt;
 
-            // Simple floor check if we swing too low
             if (trackState.onTrack && this.position.y < trackState.height + 1) {
                 this.position.y = trackState.height + 1;
                 this.verticalVelocity = 0;
@@ -241,7 +260,6 @@ export class Car {
             const accel = this.boostTimer > 0 ? 30 : 15;
             this.speed = Math.min(this.speed + accel * effectiveDt, this.boostTimer > 0 ? 85 : 55);
 
-            // Set Target Rotation (Yaw + Roll)
             const yaw = Math.atan2(this.direction.x, this.direction.z);
             targetQuat.setFromEuler(new THREE.Euler(0, yaw, grappleRoll, 'XYZ'));
 
@@ -349,8 +367,8 @@ export class Car {
             this.speed = Math.max(this.speed, 60);
         } else if (item.type === 'SCORE') {
             this.scoreBonus += 500;
-        } else if (item.type === 'TIME') {
-            this.timeScale = 0.4;
+        } else if (item.type === 'AUTO_GRAPPLE') {
+            this.autoGrappleTimer = 8.0;
         }
 
         // Auto release grapple after grabbing item

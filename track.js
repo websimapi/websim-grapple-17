@@ -161,7 +161,7 @@ export class TrackManager {
     }
 
     addItem(midpoint, slope) {
-        const types = ['BOOST', 'SCORE', 'TIME'];
+        const types = ['BOOST', 'SCORE', 'AUTO_GRAPPLE'];
         const type = types[Math.floor(Math.random() * types.length)];
         
         const mesh = this.factory.createItemMesh(type);
